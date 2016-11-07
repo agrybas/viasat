@@ -1,0 +1,80 @@
+
+API_BASE = 'http://playapi.mtgx.tv/v3'
+STREAM_BASE_URL = '/'.join([API_BASE, 'videos', 'stream'])
+
+
+def MetadataObjectForURL(url):
+    """ Returns a Metadata object for the given URL (VideoClipObject, MovieObject, EpisodeObject, 
+    TrackObject, PhotoObject)
+    """
+
+    details = JSON.ObjectFromURL(url)
+
+    try:
+        air_date = Datetime.ParseDate(details['broadcasts'][0]['air_at']).date()
+    except:
+        air_date = None
+
+    return VideoClipObject(
+        title=details['title'],
+        summary=details['summary'],
+        originally_available_at=air_date,
+        thumb=Resource.ContentsOfURLWithFallback(details['_links']['image']['href'].format(size='480x320'), R('icon-movie.png')),
+        duration=int(details['duration']) * 1000)
+
+def MediaObjectsForURL(url):
+    """ Returns a list of MediaObjects which represent the video streams available for a specific 
+    video/photo/music
+
+    This function is expected to execute and return very quickly. No HTTP requests made.
+    """
+
+    media_objects = []
+    video = JSON.ObjectFromURL(url)
+    streams = JSON.ObjectFromURL('{stream}/{id}'.format(stream=STREAM_BASE_URL, id=video['id']))['streams']
+    
+    for key, path in streams.iteritems():
+        if isinstance(path, str) and path.startswith('rtmp://'):
+            media_objects.append(MediaObject(
+                container=Container.MP4,
+                protocol=Protocol.RTMP,
+                video_codec=VideoCodec.H264,
+                video_resolution=576,
+                video_frame_rate=25,
+                audio_codec=AudioCodec.AAC,
+                audio_channels=2,
+                parts=[PartObject(key=Callback(PlayRTMP, url=path))]))
+        elif key == 'hls':
+            media_objects.append(MediaObject(
+                video_resolution=576,
+                video_frame_rate=25,
+                video_codec=VideoCodec.H264,
+                audio_channels=2,
+                audio_codec=AudioCodec.AAC,
+                optimized_for_streaming=True,
+                parts=[PartObject(key=Callback(PlayHLS, url=path))]))
+
+    return media_objects
+
+
+@indirect
+def PlayRTMP(url):    
+    try:
+        return IndirectResponse(VideoClipObject, key=RTMPVideoURL(url))
+    except:
+        raise Ex.MediaNotAvailable
+
+@indirect
+def PlayHLS(url):
+    try:
+        return IndirectResponse(VideoClipObject, key=HTTPLiveStreamURL(url))
+    except KeyError:
+        raise Ex.MediaNotAvailable
+
+def NormalizeURL(url):
+    """ Returns a standard normalized URL
+
+    This function is expected to execute and return very quickly. No HTTP requests here.
+    """
+
+    return url
